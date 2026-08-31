@@ -20,7 +20,6 @@ SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/aisles/',
 -- =====================================================
 --               Departments
 -- =====================================================
-
 CREATE OR REFRESH STREAMING TABLE week6.bronze.departments
 TBLPROPERTIES (
   'delta.feature.timestampNtz' = 'supported',
@@ -37,13 +36,13 @@ SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/departments/',
 -- =====================================================
 --               Orders
 -- =====================================================
-
+test
 
 
 -- =====================================================
 --               Orders_Products_Prior
 -- =====================================================
-
+shiena test
 
 -- =====================================================
 --               Orders_Products_Train
