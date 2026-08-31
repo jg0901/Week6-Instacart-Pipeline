@@ -12,11 +12,9 @@ TBLPROPERTIES (
 AS
 SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/aisles/', 
   format => 'csv',
-  dataAddress => 'aisles',
   headerRows => 1,
   inferColumnTypes => false,
   `cloudFiles.schemaEvolutionMode` => 'none');
-
 
 -- =====================================================
 --               Departments
@@ -28,7 +26,6 @@ TBLPROPERTIES (
 AS
 SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/departments/', 
   format => 'csv',
-  dataAddress => 'departments',
   headerRows => 1,
   inferColumnTypes => false,
   `cloudFiles.schemaEvolutionMode` => 'none');
@@ -44,7 +41,6 @@ TBLPROPERTIES (
 AS
 SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/orders/', 
   format => 'csv',
-  dataAddress => 'orders',
   headerRows => 1,
   inferColumnTypes => false,
   `cloudFiles.schemaEvolutionMode` => 'none');
@@ -60,7 +56,6 @@ TBLPROPERTIES (
 AS
 SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/order_products_prior/', 
   format => 'csv',
-  dataAddress => 'order_products_prior',
   headerRows => 1,
   inferColumnTypes => false,
 `cloudFiles.schemaEvolutionMode` => 'none');
@@ -75,7 +70,6 @@ TBLPROPERTIES (
 AS
 SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/order_products_train/', 
   format => 'csv',
-  dataAddress => 'order_products_train',
   headerRows => 1,
   inferColumnTypes => false,
   `cloudFiles.schemaEvolutionMode` => 'none');
@@ -91,7 +85,6 @@ TBLPROPERTIES (
 AS
 SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/products/', 
   format => 'csv',
-  dataAddress => 'products',
   headerRows => 1,
   inferColumnTypes => false,
   `cloudFiles.schemaEvolutionMode` => 'none');
