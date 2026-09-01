@@ -12,7 +12,6 @@ TBLPROPERTIES (
 AS
 SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/aisles/', 
   format => 'csv',
-  dataAddress => 'aisles',
   headerRows => 1,
   inferColumnTypes => false,
   `cloudFiles.schemaEvolutionMode` => 'none');
@@ -20,47 +19,92 @@ SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/aisles/',
 -- =====================================================
 --               Departments
 -- =====================================================
---test
+CREATE OR REFRESH STREAMING TABLE week6.bronze.departments
+TBLPROPERTIES (
+  'delta.feature.timestampNtz' = 'supported',
+  'delta.columnMapping.mode' = 'name')
+AS
+SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/departments/', 
+  format => 'csv',
+  headerRows => 1,
+  inferColumnTypes => false,
+  `cloudFiles.schemaEvolutionMode` => 'none');
 
 
 -- =====================================================
 --               Orders
 -- =====================================================
-test
+CREATE OR REFRESH STREAMING TABLE week6.bronze.orders
+TBLPROPERTIES (
+  'delta.feature.timestampNtz' = 'supported',
+  'delta.columnMapping.mode' = 'name')
+AS
+SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/orders/', 
+  format => 'csv',
+  headerRows => 1,
+  inferColumnTypes => false,
+  `cloudFiles.schemaEvolutionMode` => 'none');
 
 
 -- =====================================================
 --               Orders_Products_Prior
 -- =====================================================
-shiena test
+CREATE OR REFRESH STREAMING TABLE week6.bronze.order_products_prior
+TBLPROPERTIES (
+  'delta.feature.timestampNtz' = 'supported',
+  'delta.columnMapping.mode' = 'name')
+AS
+SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/order_products_prior/', 
+  format => 'csv',
+  headerRows => 1,
+  inferColumnTypes => false,
+`cloudFiles.schemaEvolutionMode` => 'none');
+
+
+--ingestion--not sure with the difference with the 2 queries but just trying to check pull process
+CREATE OR REFRESH STREAMING TABLE week6.bronze.order_products_prior
+AS SELECT 
+  CAST(order_id AS INT),
+  CAST(product_id AS INT),
+  CAST(add_to_cart_order AS INT),
+  CAST(reordered AS INT)
+FROM STREAM read_files(
+  '/Volumes/week6/bronze/raw_files/order_products__prior.csv',
+  format => 'csv',
+  header => 'true'
+);
+
+--ingestion automating the daily refresh
+CREATE OR REFRESH STREAMING TABLE week6.bronze.order_products_prior 
+SCHEDULE CRON '0 0 2 * * ?' AT TIME ZONE 'UTC' -- Runs daily at 2:00 AM UTC 
+AS SELECT 
+   CAST(order_id AS INT), 
+   CAST(product_id AS INT), 
+   CAST(add_to_cart_order AS INT), 
+   CAST(reordered AS INT) 
+FROM STREAM read_files( 
+   '/Volumes/week6/bronze/raw_files/order_products__prior.csv', 
+   format => 'csv', 
+   header => 'true' 
+); 
+
 
 -- =====================================================
 --               Orders_Products_Train
 -- =====================================================
-
+CREATE OR REFRESH STREAMING TABLE week6.bronze.order_products_train
+TBLPROPERTIES (
+  'delta.feature.timestampNtz' = 'supported',
+  'delta.columnMapping.mode' = 'name')
+AS
+SELECT * FROM STREAM read_files('/Volumes/week6/bronze/raw_files/order_products_train/', 
+  format => 'csv',
+  headerRows => 1,
+  inferColumnTypes => false,
+  `cloudFiles.schemaEvolutionMode` => 'none');
 
 
 -- =====================================================
 --               Products
 -- =====================================================
-
-
---FOR ORDER PRODUCTS PRIOR TESTING PULL
-%sql 
--- 1. Create the table with strict data types
-CREATE TABLE IF NOT EXISTS week6.bronze.order_products_prior ( 
-    order_id INT, 
-    product_id INT, 
-    add_to_cart_order INT, 
-    reordered INT 
-) USING DELTA;
-
--- 2. Incrementally load the data (handles both the initial 32M rows and future daily updates)
-COPY INTO week6.bronze.order_products_prior
-FROM '/Volumes/week6/bronze/raw_files/'
-FILES = ('order_products__prior.csv')
-FILEFORMAT = CSV
-FORMAT_OPTIONS ('header' = 'true', 'inferSchema' = 'false') 
-COPY_OPTIONS ('mergeSchema' = 'false', 'force' = 'false');
-
 
