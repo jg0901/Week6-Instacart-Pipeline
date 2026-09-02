@@ -1,10 +1,19 @@
 -- Databricks notebook source
 --Jemma
-
 --*******************************
 -- AUDITING (BRONZE LAYER)
 --*******************************
 
+-- =============================================================================
+-- BRONZE INGESTION AUDIT — volume + quality, in one historical log
+-- =============================================================================
+-- Run this after each pipeline update (a Job task downstream of the
+-- pipeline task, or a cell you run manually after each test batch).
+-- null_key_rows / duplicate_key_rows / domain_check_fail_rows are computed
+-- with the SAME conditions as each table's CONSTRAINT block in
+-- =============================================================================
+ 
+-- one-time setup
 CREATE TABLE IF NOT EXISTS week6.bronze_test.ingestion_audit_log (
   run_ts                 TIMESTAMP,
   table_name              STRING,
@@ -15,7 +24,7 @@ CREATE TABLE IF NOT EXISTS week6.bronze_test.ingestion_audit_log (
   rescued_rows             BIGINT,  -- rows where _rescued_data IS NOT NULL
   domain_check_fail_rows   BIGINT   -- rows failing a table-specific range/domain check (0 where none apply)
 ) USING DELTA;
-
+ 
 -- run this after each pipeline update
 INSERT INTO week6.bronze_test.ingestion_audit_log
 SELECT
@@ -27,19 +36,20 @@ SELECT
   t.duplicate_key_rows,
   t.rescued_rows,
   t.domain_check_fail_rows
-
 FROM (
-  SELECT 'aisles' AS table_name, COUNT(*) AS cumulative_rows,
-   COUNT_IF(TRY_CAST(aisle_id AS BIGINT) IS NULL) AS null_key_rows,
-    (COUNT(*) - COUNT(DISTINCT aisle_id)) AS duplicate_key_rows,
-    COUNT_IF(_rescued_data IS NOT NULL) AS rescued_rows,
-    0 AS domain_check_fail_rows
+  SELECT
+    'aisles'                                            AS table_name,
+    COUNT(*)                                             AS cumulative_rows,
+    COUNT_IF(TRY_CAST(aisle_id AS BIGINT) IS NULL OR TRY_CAST(aisle_id AS BIGINT) <= 0) AS null_key_rows,
+    COUNT(*) - COUNT(DISTINCT aisle_id)                   AS duplicate_key_rows,
+    COUNT_IF(_rescued_data IS NOT NULL)                   AS rescued_rows,
+    0                                                      AS domain_check_fail_rows
   FROM week6.bronze_test.aisles
   UNION ALL
   SELECT
     'departments',
     COUNT(*),
-    COUNT_IF(TRY_CAST(department_id AS BIGINT) IS NULL),
+    COUNT_IF(TRY_CAST(department_id AS BIGINT) IS NULL OR TRY_CAST(department_id AS BIGINT) <= 0),
     COUNT(*) - COUNT(DISTINCT department_id),
     COUNT_IF(_rescued_data IS NOT NULL),
     0
@@ -48,58 +58,88 @@ FROM (
   SELECT
     'orders',
     COUNT(*),
-    COUNT_IF(order_id IS NULL OR TRIM(order_id) = ''),
+    COUNT_IF(TRY_CAST(order_id AS BIGINT) IS NULL OR TRY_CAST(order_id AS BIGINT) <= 0),
     COUNT(*) - COUNT(DISTINCT order_id),
     COUNT_IF(_rescued_data IS NOT NULL),
     COUNT_IF(
-      user_id IS NULL OR TRIM(user_id) = ''
+      TRY_CAST(user_id AS BIGINT) IS NULL OR TRY_CAST(user_id AS BIGINT) <= 0
+      OR TRY_CAST(order_number AS INT) IS NULL OR TRY_CAST(order_number AS INT) <= 0
       OR TRY_CAST(order_dow AS INT) NOT BETWEEN 0 AND 6
       OR TRY_CAST(order_hour_of_day AS INT) NOT BETWEEN 0 AND 23
-      OR (days_since_prior_order IS NOT NULL AND TRY_CAST(days_since_prior_order AS DOUBLE) < 0))
+      OR (days_since_prior_order IS NOT NULL AND TRY_CAST(days_since_prior_order AS DOUBLE) < 0)
+    )
   FROM week6.bronze_test.orders
   UNION ALL
   SELECT
     'order_products_prior',
     COUNT(*),
-    COUNT_IF(order_id IS NULL OR TRIM(order_id) = '' OR product_id IS NULL OR TRIM(product_id) = ''),
+    COUNT_IF(
+      TRY_CAST(order_id AS BIGINT) IS NULL OR TRY_CAST(order_id AS BIGINT) <= 0
+      OR TRY_CAST(product_id AS BIGINT) IS NULL OR TRY_CAST(product_id AS BIGINT) <= 0
+    ),
     COUNT(*) - COUNT(DISTINCT CONCAT(order_id, '-', product_id)),
     COUNT_IF(_rescued_data IS NOT NULL),
     COUNT_IF(
       (add_to_cart_order IS NOT NULL AND TRY_CAST(add_to_cart_order AS INT) <= 0)
-      OR (reordered IS NOT NULL AND reordered NOT IN ('0', '1')))
+      OR (reordered IS NOT NULL AND reordered NOT IN ('0', '1'))
+    )
   FROM week6.bronze_test.order_products_prior
   UNION ALL
   SELECT
     'order_products_train',
     COUNT(*),
-    COUNT_IF(order_id IS NULL OR TRIM(order_id) = '' OR product_id IS NULL OR TRIM(product_id) = ''),
+    COUNT_IF(
+      TRY_CAST(order_id AS BIGINT) IS NULL OR TRY_CAST(order_id AS BIGINT) <= 0
+      OR TRY_CAST(product_id AS BIGINT) IS NULL OR TRY_CAST(product_id AS BIGINT) <= 0
+    ),
     COUNT(*) - COUNT(DISTINCT CONCAT(order_id, '-', product_id)),
     COUNT_IF(_rescued_data IS NOT NULL),
     COUNT_IF(
       (add_to_cart_order IS NOT NULL AND TRY_CAST(add_to_cart_order AS INT) <= 0)
-      OR (reordered IS NOT NULL AND reordered NOT IN ('0', '1')))
+      OR (reordered IS NOT NULL AND reordered NOT IN ('0', '1'))
+    )
   FROM week6.bronze_test.order_products_train
   UNION ALL
-  SELECT  'products',
+  SELECT 'products',
     COUNT(*),
-    COUNT_IF(product_id IS NULL OR TRIM(product_id) = ''),
+    COUNT_IF(TRY_CAST(product_id AS BIGINT) IS NULL OR TRY_CAST(product_id AS BIGINT) <= 0),
     COUNT(*) - COUNT(DISTINCT product_id),
     COUNT_IF(_rescued_data IS NOT NULL),
-    0
-  FROM week6.bronze_test.products
-) AS t
+    COUNT_IF(
+      TRY_CAST(aisle_id AS BIGINT) IS NULL OR TRY_CAST(aisle_id AS BIGINT) <= 0
+      OR TRY_CAST(department_id AS BIGINT) IS NULL OR TRY_CAST(department_id AS BIGINT) <= 0
+    )
+  FROM week6.bronze_test.products) AS t
 LEFT JOIN (
   SELECT table_name, MAX(cumulative_rows) AS last_cumulative
   FROM week6.bronze_test.ingestion_audit_log
-  GROUP BY table_name) AS prev
+  GROUP BY table_name ) AS prev
 ON t.table_name = prev.table_name;
+ 
 
 SELECT  * FROM week6.bronze_test.ingestion_audit_log;
 
 
 -- COMMAND ----------
 
--- MJ
+-- Null Checkers and Uniqueness Checker in Aisle and Department Bronze tables
+Select count(*) AS row_count, count(distinct aisle_id) AS distinct_aisle_id_count, count(distinct aisle) as distinct_aisle_count from week6.bronze_test.aisles; 
+Select count(*) AS row_count, count(distinct department_id)as distinct_dep_id_count, count(distinct department) as distinct_dep_count from week6.bronze_test.departments; 
+
+-- COMMAND ----------
+
+--Products Table
+select count(*) AS row_count, count(distinct product_id) AS product_id, count(distinct product_name) as product_name_count, 
+count(distinct aisle_id) aisle_count, count(distinct department_id) as dept_id_count 
+from week6.bronze_test.products; 
+select * from week6.bronze_test.products 
+where aisle_id IS NULL OR department_id IS NULL;
+select distinct aisle_id from week6.bronze_test.products;
+select distinct department_id from week6.bronze_test.products; 
+--This shows the rows where aisle_id is not in the aisles table
+select * from week6.bronze_test.products where aisle_id NOT IN (SELECT distinct aisle_id FROM week6.bronze_test.aisles);
+--This shows the rows where department_id is not in the departments table
+select * from week6.bronze_test.products where department_id NOT IN (SELECT distinct department_id FROM week6.bronze_test.departments);
 
 -- COMMAND ----------
 
