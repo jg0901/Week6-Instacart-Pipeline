@@ -134,3 +134,13 @@ LIMIT 10;
 --               Products
 -- =====================================================
 
+
+
+SELECT 
+  order_id, 
+  MAX(add_to_cart_order) AS total_items_in_cart
+FROM week6.bronze.order_products_prior
+GROUP BY order_id
+ORDER BY total_items_in_cart DESC
+LIMIT 10;
+
