@@ -1,19 +1,18 @@
 -- Databricks notebook source
---Jemma
---*******************************
--- AUDITING (BRONZE LAYER)
---*******************************
+--[Jemma]
 
 -- =============================================================================
 -- BRONZE INGESTION AUDIT — volume + quality, in one historical log
 -- =============================================================================
--- Run this after each pipeline update (a Job task downstream of the
+--- Run this after each pipeline update (a Job task downstream of the
 -- pipeline task, or a cell you run manually after each test batch).
 -- null_key_rows / duplicate_key_rows / domain_check_fail_rows are computed
--- with the SAME conditions as each table's CONSTRAINT block in
+-- with the SAME conditions as each table's CONSTRAINT block in bronze layer
+-- If you change a constraint there, update
+-- the matching COUNT_IF here too — they're two separate definitions of the
+-- same rule, kept in sync by hand, not by the engine.
 -- =============================================================================
  
--- one-time setup
 CREATE TABLE IF NOT EXISTS week6.bronze_test.ingestion_audit_log (
   run_ts                 TIMESTAMP,
   table_name              STRING,
@@ -37,6 +36,7 @@ SELECT
   t.rescued_rows,
   t.domain_check_fail_rows
 FROM (
+ 
   SELECT
     'aisles'                                            AS table_name,
     COUNT(*)                                             AS cumulative_rows,
@@ -45,7 +45,9 @@ FROM (
     COUNT_IF(_rescued_data IS NOT NULL)                   AS rescued_rows,
     0                                                      AS domain_check_fail_rows
   FROM week6.bronze_test.aisles
+ 
   UNION ALL
+ 
   SELECT
     'departments',
     COUNT(*),
@@ -54,7 +56,9 @@ FROM (
     COUNT_IF(_rescued_data IS NOT NULL),
     0
   FROM week6.bronze_test.departments
+ 
   UNION ALL
+ 
   SELECT
     'orders',
     COUNT(*),
@@ -69,7 +73,9 @@ FROM (
       OR (days_since_prior_order IS NOT NULL AND TRY_CAST(days_since_prior_order AS DOUBLE) < 0)
     )
   FROM week6.bronze_test.orders
+ 
   UNION ALL
+ 
   SELECT
     'order_products_prior',
     COUNT(*),
@@ -84,7 +90,9 @@ FROM (
       OR (reordered IS NOT NULL AND reordered NOT IN ('0', '1'))
     )
   FROM week6.bronze_test.order_products_prior
+ 
   UNION ALL
+ 
   SELECT
     'order_products_train',
     COUNT(*),
@@ -99,8 +107,11 @@ FROM (
       OR (reordered IS NOT NULL AND reordered NOT IN ('0', '1'))
     )
   FROM week6.bronze_test.order_products_train
+ 
   UNION ALL
-  SELECT 'products',
+ 
+  SELECT
+    'products',
     COUNT(*),
     COUNT_IF(TRY_CAST(product_id AS BIGINT) IS NULL OR TRY_CAST(product_id AS BIGINT) <= 0),
     COUNT(*) - COUNT(DISTINCT product_id),
@@ -109,13 +120,66 @@ FROM (
       TRY_CAST(aisle_id AS BIGINT) IS NULL OR TRY_CAST(aisle_id AS BIGINT) <= 0
       OR TRY_CAST(department_id AS BIGINT) IS NULL OR TRY_CAST(department_id AS BIGINT) <= 0
     )
-  FROM week6.bronze_test.products) AS t
+  FROM week6.bronze_test.products
+ 
+) t
 LEFT JOIN (
   SELECT table_name, MAX(cumulative_rows) AS last_cumulative
   FROM week6.bronze_test.ingestion_audit_log
-  GROUP BY table_name ) AS prev
+  GROUP BY table_name
+) prev
 ON t.table_name = prev.table_name;
  
+ 
+-- =============================================================================
+-- TRACE: duplicates introduced per batch (read-only, run anytime after the
+-- INSERT above has logged at least two runs for a table)
+-- =============================================================================
+-- duplicate_key_rows above is CUMULATIVE -- COUNT(*) over the whole table as
+-- it stands at that run, not "how many duplicates did the batch I just
+-- loaded add." To see which run introduced (or worsened) duplication, diff
+-- consecutive runs per table with LAG(). A positive new_duplicates value on
+-- the run right after loading a test batch means that batch is the culprit.
+-- =============================================================================
+SELECT
+  table_name,
+  run_ts,
+  cumulative_rows,
+  duplicate_key_rows,
+  duplicate_key_rows - LAG(duplicate_key_rows) OVER (
+    PARTITION BY table_name ORDER BY run_ts
+  ) AS new_duplicates_this_batch
+FROM week6.bronze_test.ingestion_audit_log
+ORDER BY table_name, run_ts;
+ 
+ 
+-- =============================================================================
+-- DRILL-DOWN: once a batch is implicated above, find the actual duplicate
+-- rows (not just the count) by grouping on the same key each table's
+-- duplicate_key_rows uses, then optionally scoping by _ingested_at to the
+-- suspect batch's load window. Run one at a time, table_name swapped as needed.
+-- =============================================================================
+ 
+-- aisles / departments / products: single-column key
+SELECT aisle_id, COUNT(*) AS n
+FROM week6.bronze_test.aisles
+-- WHERE _ingested_at >= '<suspect batch load time>'
+GROUP BY aisle_id
+HAVING COUNT(*) > 1;
+ 
+-- orders: single-column key
+SELECT order_id, COUNT(*) AS n
+FROM week6.bronze_test.orders
+-- WHERE _ingested_at >= '<suspect batch load time>'
+GROUP BY order_id
+HAVING COUNT(*) > 1;
+ 
+-- order_products_prior / order_products_train: composite key
+SELECT order_id, product_id, COUNT(*) AS n
+FROM week6.bronze_test.order_products_prior
+-- WHERE _ingested_at >= '<suspect batch load time>'
+GROUP BY order_id, product_id
+HAVING COUNT(*) > 1;
 
 SELECT  * FROM week6.bronze_test.ingestion_audit_log;
 
