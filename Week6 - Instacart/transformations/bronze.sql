@@ -71,6 +71,59 @@ FROM STREAM read_files(
    header => 'true' 
 ); 
 
+--Volume, Uniqueness, and Reorder Ratio
+SELECT 
+  COUNT(*) AS total_rows,
+  COUNT(DISTINCT order_id) AS unique_orders,
+  COUNT(DISTINCT product_id) AS unique_products,
+  ROUND(AVG(reordered), 4) AS avg_reorder_rate
+FROM week6.bronze.order_products_prior; 
+
+
+
+--Completeness (Null Checks)
+SELECT
+  COUNT_IF(order_id IS NULL) AS missing_order_id,
+  COUNT_IF(product_id IS NULL) AS missing_product_id,
+  COUNT_IF(add_to_cart_order IS NULL) AS missing_sequence,
+  COUNT_IF(reordered IS NULL) AS missing_reordered
+FROM week6.bronze.order_products_prior;
+
+
+--validate reordered flag
+SELECT 
+   reordered, 
+   COUNT(*) AS row_count 
+FROM week6.bronze.order_products_prior 
+GROUP BY reordered 
+ORDER BY reordered; 
+
+
+--valudate sequence boundaries
+SELECT 
+   MIN(add_to_cart_order) AS min_cart_order, 
+   COUNT_IF(add_to_cart_order <= 0) AS total_invalid_sequences 
+FROM week6.bronze.order_products_prior; 
+
+
+--validate key constraints
+SELECT 
+   COUNT_IF(order_id <= 0) AS invalid_order_ids, 
+   COUNT_IF(product_id <= 0) AS invalid_product_ids 
+FROM week6.bronze.order_products_prior; 
+
+
+--Distribution and Outlier Detection
+---This surfaces extreme cart sizes (e.g., hundreds of items) which often indicate wholesale buyers or bot activity that can distort market basket algorithms.
+SELECT 
+  order_id, 
+  MAX(add_to_cart_order) AS total_items_in_cart
+FROM week6.bronze.order_products_prior
+GROUP BY order_id
+ORDER BY total_items_in_cart DESC
+LIMIT 10;
+
+
 -- =====================================================
 --               Orders_Products_Train
 -- =====================================================
