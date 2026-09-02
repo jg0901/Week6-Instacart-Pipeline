@@ -207,10 +207,6 @@ select * from week6.bronze_test.products where department_id NOT IN (SELECT dist
 
 -- COMMAND ----------
 
---Vee
-
--- COMMAND ----------
-
 --Kinah
 -- ============================================================
 -- Order_Products_Train : pre-cleaning analysis  [Kinah]
@@ -333,3 +329,7 @@ WHERE
 -- COMMAND ----------
 
 --Shiena
+
+-- COMMAND ----------
+
+--Vee
