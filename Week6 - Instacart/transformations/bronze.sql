@@ -6,21 +6,19 @@
 --               Aisles
 -- =====================================================
 CREATE OR REFRESH STREAMING TABLE week6.bronze_test.aisles (
-  CONSTRAINT aisle_id_present EXPECT (
-    aisle_id IS NOT NULL AND TRIM(aisle_id) <> ''  ),
+  CONSTRAINT aisle_id_valid_number EXPECT (
+  TRY_CAST(aisle_id AS BIGINT) IS NOT NULL),
   CONSTRAINT row_parsed EXPECT (
     _rescued_data IS NULL  )
 )
 COMMENT 'Lossless raw ingestion of Instacart aisles'
-AS
-SELECT
-  *,
+AS SELECT *,
   _metadata.file_path             AS _source_file,
   _metadata.file_name              AS _source_file_name,
   _metadata.file_modification_time AS _source_file_modified_at,
   CURRENT_TIMESTAMP()               AS _ingested_at
 FROM STREAM read_files(
-  '/Volumes/week6/bronze/raw_files/aisles/',
+  '/Volumes/week6/bronze_test/raw_files/aisles/',
   format            => 'csv',
   header            => true,
   inferColumnTypes  => false,
@@ -33,21 +31,19 @@ FROM STREAM read_files(
 --               Departments
 -- =====================================================
 CREATE OR REFRESH STREAMING TABLE week6.bronze_test.departments (
-  CONSTRAINT department_id_present EXPECT (
-    department_id IS NOT NULL AND TRIM(department_id) <> ''  ),
+  CONSTRAINT department_id_valid_number EXPECT (
+    TRY_CAST(department_id AS BIGINT) IS NOT NULL),
   CONSTRAINT row_parsed EXPECT (
-    _rescued_data IS NULL  )
-)
+    _rescued_data IS NULL  ))
 COMMENT 'Lossless raw ingestion of Instacart departments'
-AS
-SELECT
+AS SELECT
   *,
   _metadata.file_path             AS _source_file,
   _metadata.file_name              AS _source_file_name,
   _metadata.file_modification_time AS _source_file_modified_at,
   CURRENT_TIMESTAMP()               AS _ingested_at
 FROM STREAM read_files(
-  '/Volumes/week6/bronze/raw_files/departments/',
+  '/Volumes/week6/bronze_test/raw_files/departments/',
   format            => 'csv',
   header            => true,
   inferColumnTypes  => false,
@@ -74,7 +70,7 @@ SELECT
   _metadata.file_modification_time AS _source_file_modified_at,
   CURRENT_TIMESTAMP()               AS _ingested_at
 FROM STREAM read_files(
-  '/Volumes/week6/bronze/raw_files/orders/',
+  '/Volumes/week6/bronze_test/raw_files/orders/',
   format            => 'csv',
   header            => true,
   inferColumnTypes  => false,
@@ -102,7 +98,7 @@ SELECT
   _metadata.file_modification_time AS _source_file_modified_at,
   CURRENT_TIMESTAMP()               AS _ingested_at
 FROM STREAM read_files(
-  '/Volumes/week6/bronze/raw_files/order_products_prior/',
+  '/Volumes/week6/bronze_test/raw_files/order_products_prior/',
   format            => 'csv',
   header            => true,
   inferColumnTypes  => false,
@@ -123,14 +119,13 @@ CREATE OR REFRESH STREAMING TABLE week6.bronze_test.order_products_train (
 )
 COMMENT 'Lossless raw ingestion of Instacart order_products (train orders)'
 AS
-SELECT
-  *,
+SELECT *,
   _metadata.file_path             AS _source_file,
   _metadata.file_name              AS _source_file_name,
   _metadata.file_modification_time AS _source_file_modified_at,
   CURRENT_TIMESTAMP()               AS _ingested_at
 FROM STREAM read_files(
-  '/Volumes/week6/bronze/raw_files/order_products_train/',
+  '/Volumes/week6/bronze_test/raw_files/order_products_train/',
   format            => 'csv',
   header            => true,
   inferColumnTypes  => false,
@@ -146,8 +141,7 @@ CREATE OR REFRESH STREAMING TABLE week6.bronze_test.products (
   CONSTRAINT product_id_present EXPECT (
     product_id IS NOT NULL AND TRIM(product_id) <> ''  ),
   CONSTRAINT row_parsed EXPECT (
-    _rescued_data IS NULL  )
-)
+    _rescued_data IS NULL  ))
 COMMENT 'Lossless raw ingestion of Instacart products'
 AS SELECT  *,
   _metadata.file_path             AS _source_file,
@@ -155,11 +149,10 @@ AS SELECT  *,
   _metadata.file_modification_time AS _source_file_modified_at,
   CURRENT_TIMESTAMP()               AS _ingested_at
 FROM STREAM read_files(
-  '/Volumes/week6/bronze/raw_files/products/',
+  '/Volumes/week6/bronze_test/raw_files/products/',
   format            => 'csv',
   header            => true,
   inferColumnTypes  => false,
   schemaEvolutionMode => 'rescue',
   rescuedDataColumn => '_rescued_data'
 );
-
