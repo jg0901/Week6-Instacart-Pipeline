@@ -7,8 +7,7 @@
 -- =====================================================
 CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.aisles_clean (
   CONSTRAINT aisle_id_valid EXPECT (
-    aisle_id IS NOT NULL
-  ) ON VIOLATION DROP ROW
+    aisle_id IS NOT NULL and aisle_id>0) ON VIOLATION DROP ROW
 )
 COMMENT 'Cleaned aisles: one row per aisle_id (latest ingested wins on a name conflict), typed key, trimmed name, single quality-flag column'
 AS
@@ -16,43 +15,42 @@ WITH typed AS (
   SELECT
     TRY_CAST(aisle_id AS BIGINT)  AS aisle_id,   -- null aisle_id or a value that fails to cast both become NULL here
     NULLIF(TRIM(aisle), '')       AS aisle,
-    _ingested_at
+    _ingested_at,
+    _source_file,
+    _source_file_modified_at
   FROM week6.bronze_test.aisles),
 name_counts AS (
   SELECT aisle_id, COUNT(DISTINCT aisle) AS distinct_name_count
   FROM typed
   WHERE aisle_id IS NOT NULL
-  GROUP BY aisle_id
-),
+  GROUP BY aisle_id),
+
 ranked AS (
   SELECT
     t.*,
     ROW_NUMBER() OVER (
-      PARTITION BY t.aisle_id ORDER BY t._ingested_at DESC
-    )                                                AS rn,
-    COALESCE(nc.distinct_name_count, 0) > 1           AS is_conflicting_name
+      PARTITION BY t.aisle_id
+      ORDER BY t._source_file_modified_at DESC, t._ingested_at DESC, t._source_file DESC
+    )AS rn,
+    COALESCE(nc.distinct_name_count, 0) > 1 AS is_conflicting_name
   FROM typed t
-  LEFT JOIN name_counts nc ON nc.aisle_id = t.aisle_id
-),
+  LEFT JOIN name_counts nc ON nc.aisle_id = t.aisle_id),
 
 deduped AS (
   SELECT aisle_id, aisle, is_conflicting_name
   FROM ranked
-  WHERE rn = 1),               -- keeps 1 row per aisle_id: exact duplicates collapse silently,
-                            -- conflicting names keep the most recently ingested version
+  WHERE rn = 1),                  -- keeps 1 row per aisle_id: exact duplicates collapse silently,
+                           -- conflicting names keep the most recently ingested version
 flagged AS (
-  SELECT
-    aisle_id,
-    aisle,
+  SELECT aisle_id, aisle,
     is_conflicting_name,
     aisle IS NOT NULL AND COUNT(*) OVER (PARTITION BY aisle) > 1 AS is_duplicate_name
   FROM deduped)
-
 SELECT aisle_id, aisle,
-  CASE WHEN aisle IS NULL THEN 'missing_name'
+  CASE
+    WHEN aisle IS NULL       THEN 'missing_name'
     WHEN is_conflicting_name THEN 'conflicting_name'
     WHEN is_duplicate_name   THEN 'duplicate_name'
-    WHEN aisle RLIKE '^[^a-zA-Z]*$' THEN 'gibberish_name'
     ELSE NULL
   END AS aisle_quality_flag
 FROM flagged;
@@ -63,41 +61,47 @@ FROM flagged;
 -- =====================================================
 CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.departments_clean (
   CONSTRAINT department_id_valid EXPECT (
-    department_id IS NOT NULL
-  ) ON VIOLATION DROP ROW)
+    department_id IS NOT NULL and department_id>0) ON VIOLATION DROP ROW
+)
 COMMENT 'Cleaned departments: one row per department_id (latest ingested wins on a name conflict), typed key, trimmed name, single quality-flag column'
-AS WITH typed AS (
-  SELECT TRY_CAST(department_id AS BIGINT) AS department_id,
-    NULLIF(TRIM(department), '') AS department,
-    _ingested_at
+AS
+WITH typed AS (
+  SELECT
+    TRY_CAST(department_id AS BIGINT)  AS department_id,
+    NULLIF(TRIM(department), '')       AS department,
+    _ingested_at,
+    _source_file,
+    _source_file_modified_at
   FROM week6.bronze_test.departments),
 
 name_counts AS (
   SELECT department_id, COUNT(DISTINCT department) AS distinct_name_count
   FROM typed
   WHERE department_id IS NOT NULL
-  GROUP BY department_id
-),
+  GROUP BY department_id),
 ranked AS (
-  SELECT
-    t.*,
+  SELECT t.*,
     ROW_NUMBER() OVER (
-      PARTITION BY t.department_id ORDER BY t._ingested_at DESC
-    )                                                AS rn,
-    COALESCE(nc.distinct_name_count, 0) > 1           AS is_conflicting_name
+      PARTITION BY t.department_id
+      ORDER BY t._source_file_modified_at DESC, t._ingested_at DESC, t._source_file DESC
+    ) AS rn,
+    COALESCE(nc.distinct_name_count, 0) > 1 AS is_conflicting_name
   FROM typed t
   LEFT JOIN name_counts nc ON nc.department_id = t.department_id),
-
 deduped AS (
   SELECT department_id, department, is_conflicting_name
   FROM ranked
   WHERE rn = 1),
-
 flagged AS (
-  SELECT department_id, department, is_conflicting_name,
+  SELECT
+    department_id,
+    department,
+    is_conflicting_name,
     department IS NOT NULL AND COUNT(*) OVER (PARTITION BY department) > 1 AS is_duplicate_name
   FROM deduped)
-SELECT department_id,department,
+SELECT
+  department_id,
+  department,
   CASE
     WHEN department IS NULL  THEN 'missing_name'
     WHEN is_conflicting_name THEN 'conflicting_name'
@@ -106,14 +110,13 @@ SELECT department_id,department,
   END AS department_quality_flag
 FROM flagged;
 
-
 -- =====================================================
 --               Products
 -- =====================================================
 CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.products_clean (
   CONSTRAINT product_id_valid EXPECT (
-    product_id IS NOT NULL) 
-    ON VIOLATION DROP ROW)
+    product_id IS NOT NULL and product_id>0 ) ON VIOLATION DROP ROW
+    )
 COMMENT 'Cleaned products: one row per product_id (latest ingested wins on a name conflict), typed keys, invalid FKs nulled (not dropped), single quality-flag column'
 AS
 WITH typed AS (
@@ -122,27 +125,31 @@ WITH typed AS (
     NULLIF(TRIM(product_name), '')     AS product_name,
     TRY_CAST(aisle_id AS BIGINT)       AS aisle_id,
     TRY_CAST(department_id AS BIGINT)  AS department_id,
-    _ingested_at
+    _ingested_at,
+    _source_file,
+    _source_file_modified_at
   FROM week6.bronze_test.products),
+
 name_counts AS (
   SELECT product_id, COUNT(DISTINCT product_name) AS distinct_name_count
   FROM typed
   WHERE product_id IS NOT NULL
   GROUP BY product_id),
+
 ranked AS (
   SELECT t.*,
     ROW_NUMBER() OVER (
-      PARTITION BY t.product_id ORDER BY t._ingested_at DESC) AS rn,
+      PARTITION BY t.product_id
+      ORDER BY t._source_file_modified_at DESC, t._ingested_at DESC, t._source_file DESC
+    ) AS rn,
     COALESCE(nc.distinct_name_count, 0) > 1 AS is_conflicting_name
   FROM typed t
-  LEFT JOIN name_counts nc ON nc.product_id = t.product_id ),
-
+  LEFT JOIN name_counts nc ON nc.product_id = t.product_id),
 deduped AS (
   SELECT product_id, product_name, aisle_id, department_id, is_conflicting_name
   FROM ranked
   WHERE rn = 1),
-
-flagged AS ( SELECT
+flagged AS (SELECT
     product_id,
     product_name,
     aisle_id,
@@ -151,8 +158,11 @@ flagged AS ( SELECT
     product_name IS NOT NULL AND COUNT(*) OVER (PARTITION BY product_name) > 1 AS is_duplicate_name,
     product_name IS NOT NULL AND NOT product_name RLIKE '[A-Za-z]' AS is_gibberish_name
   FROM deduped)
-SELECT  product_id, product_name,
-  aisle_id, department_id,
+SELECT
+  product_id,
+  product_name,
+  aisle_id,
+  department_id,
   CASE
     WHEN product_name IS NULL  THEN 'missing_name'
     WHEN is_gibberish_name     THEN 'gibberish_name'
@@ -258,7 +268,6 @@ SELECT
   _ingested_at
 FROM STREAM(week6.bronze_test.orders)
 WHERE eval_set != 'test';
-
 
 -- =====================================================
 --               Order_Products_Prior
