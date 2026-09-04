@@ -7,18 +7,19 @@
 -- =====================================================
 CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.aisles_clean (
   CONSTRAINT aisle_id_valid EXPECT (
-    aisle_id IS NOT NULL and aisle_id>0) ON VIOLATION DROP ROW
+    aisle_id IS NOT NULL AND aisle_id > 0) ON VIOLATION DROP ROW
 )
-COMMENT 'Cleaned aisles: one row per aisle_id (latest ingested wins on a name conflict), typed key, trimmed name, single quality-flag column'
+COMMENT 'Cleaned aisles: one row per aisle_id (latest ingested wins on a name conflict), typed+validated key (not null, > 0), trimmed name, quality-flags array'
 AS
 WITH typed AS (
   SELECT
-    TRY_CAST(aisle_id AS BIGINT)  AS aisle_id,   -- null aisle_id or a value that fails to cast both become NULL here
+    TRY_CAST(aisle_id AS BIGINT)  AS aisle_id,   -- null aisle_id or a value that fails to cast both become NULL here; non-positive values pass through untouched and are caught by the aisle_id_valid constraint below
     NULLIF(TRIM(aisle), '')       AS aisle,
     _ingested_at,
     _source_file,
     _source_file_modified_at
   FROM week6.bronze_test.aisles),
+
 name_counts AS (
   SELECT aisle_id, COUNT(DISTINCT aisle) AS distinct_name_count
   FROM typed
@@ -26,66 +27,67 @@ name_counts AS (
   GROUP BY aisle_id),
 
 ranked AS (
-  SELECT
-    t.*,
+  SELECT t.*,
     ROW_NUMBER() OVER (
       PARTITION BY t.aisle_id
       ORDER BY t._source_file_modified_at DESC, t._ingested_at DESC, t._source_file DESC
-    )AS rn,
-    COALESCE(nc.distinct_name_count, 0) > 1 AS is_conflicting_name
+    )  AS rn,
+    COALESCE(nc.distinct_name_count, 0) > 1  AS is_conflicting_name
   FROM typed t
   LEFT JOIN name_counts nc ON nc.aisle_id = t.aisle_id),
-
 deduped AS (
   SELECT aisle_id, aisle, is_conflicting_name
   FROM ranked
-  WHERE rn = 1),                  -- keeps 1 row per aisle_id: exact duplicates collapse silently,
-                           -- conflicting names keep the most recently ingested version
+  WHERE rn = 1                -- keeps 1 row per aisle_id: exact duplicates collapse silently,
+),                             -- conflicting names keep the most recently ingested version
 flagged AS (
-  SELECT aisle_id, aisle,
+  SELECT
+    aisle_id,
+    aisle,
     is_conflicting_name,
     aisle IS NOT NULL AND COUNT(*) OVER (PARTITION BY aisle) > 1 AS is_duplicate_name
   FROM deduped)
-SELECT aisle_id, aisle,
-  CASE
-    WHEN aisle IS NULL       THEN 'missing_name'
-    WHEN is_conflicting_name THEN 'conflicting_name'
-    WHEN is_duplicate_name   THEN 'duplicate_name'
-    ELSE NULL
-  END AS aisle_quality_flag
+SELECT  aisle_id, aisle,
+  FILTER(
+    ARRAY(
+      CASE WHEN aisle IS NULL       THEN 'missing_name' END,
+      CASE WHEN is_conflicting_name THEN 'conflicting_name' END,
+      CASE WHEN is_duplicate_name   THEN 'duplicate_name' END ),
+    x -> x IS NOT NULL
+  ) AS aisle_quality_flags
 FROM flagged;
-
 
 -- =====================================================
 --               Departments
 -- =====================================================
 CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.departments_clean (
   CONSTRAINT department_id_valid EXPECT (
-    department_id IS NOT NULL and department_id>0) ON VIOLATION DROP ROW
-)
-COMMENT 'Cleaned departments: one row per department_id (latest ingested wins on a name conflict), typed key, trimmed name, single quality-flag column'
+    department_id IS NOT NULL AND department_id > 0
+  ) ON VIOLATION DROP ROW)
+COMMENT 'Cleaned departments: one row per department_id (latest ingested wins on a name conflict), typed+validated key (not null, > 0), trimmed name, quality-flags array'
 AS
 WITH typed AS (
   SELECT
-    TRY_CAST(department_id AS BIGINT)  AS department_id,
-    NULLIF(TRIM(department), '')       AS department,
+    TRY_CAST(department_id AS BIGINT)  AS department_id,   -- null/uncastable become NULL here; non-positive values pass through and are caught by the department_id_valid constraint below
+    NULLIF(TRIM(department), '')  AS department,
     _ingested_at,
     _source_file,
     _source_file_modified_at
   FROM week6.bronze_test.departments),
-
+-- Same DISTINCT_WINDOW_FUNCTION_UNSUPPORTED fix as aisles_clean: distinct-
+-- name count computed as a plain grouped aggregate, joined back per row.
 name_counts AS (
   SELECT department_id, COUNT(DISTINCT department) AS distinct_name_count
   FROM typed
   WHERE department_id IS NOT NULL
   GROUP BY department_id),
-ranked AS (
-  SELECT t.*,
+
+ranked AS ( SELECT t.*,
     ROW_NUMBER() OVER (
       PARTITION BY t.department_id
       ORDER BY t._source_file_modified_at DESC, t._ingested_at DESC, t._source_file DESC
     ) AS rn,
-    COALESCE(nc.distinct_name_count, 0) > 1 AS is_conflicting_name
+    COALESCE(nc.distinct_name_count, 0) > 1  AS is_conflicting_name
   FROM typed t
   LEFT JOIN name_counts nc ON nc.department_id = t.department_id),
 deduped AS (
@@ -99,29 +101,30 @@ flagged AS (
     is_conflicting_name,
     department IS NOT NULL AND COUNT(*) OVER (PARTITION BY department) > 1 AS is_duplicate_name
   FROM deduped)
-SELECT
-  department_id,
-  department,
-  CASE
-    WHEN department IS NULL  THEN 'missing_name'
-    WHEN is_conflicting_name THEN 'conflicting_name'
-    WHEN is_duplicate_name   THEN 'duplicate_name'
-    ELSE NULL
-  END AS department_quality_flag
+SELECT department_id, department,
+  FILTER(
+    ARRAY(
+      CASE WHEN department IS NULL  THEN 'missing_name' END,
+      CASE WHEN is_conflicting_name THEN 'conflicting_name' END,
+      CASE WHEN is_duplicate_name   THEN 'duplicate_name' END ),
+    x -> x IS NOT NULL
+  ) AS department_quality_flags
 FROM flagged;
+
+
 
 -- =====================================================
 --               Products
 -- =====================================================
 CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.products_clean (
   CONSTRAINT product_id_valid EXPECT (
-    product_id IS NOT NULL and product_id>0 ) ON VIOLATION DROP ROW
-    )
-COMMENT 'Cleaned products: one row per product_id (latest ingested wins on a name conflict), typed keys, invalid FKs nulled (not dropped), single quality-flag column'
+    product_id IS NOT NULL AND product_id > 0) ON VIOLATION DROP ROW
+)
+COMMENT 'Cleaned products: one row per product_id (latest ingested wins on a name conflict), typed+validated key (not null, > 0), invalid FKs nulled (not dropped), quality-flags array'
 AS
 WITH typed AS (
   SELECT
-    TRY_CAST(product_id AS BIGINT)     AS product_id,
+    TRY_CAST(product_id AS BIGINT)     AS product_id,  
     NULLIF(TRIM(product_name), '')     AS product_name,
     TRY_CAST(aisle_id AS BIGINT)       AS aisle_id,
     TRY_CAST(department_id AS BIGINT)  AS department_id,
@@ -149,7 +152,8 @@ deduped AS (
   SELECT product_id, product_name, aisle_id, department_id, is_conflicting_name
   FROM ranked
   WHERE rn = 1),
-flagged AS (SELECT
+flagged AS (
+  SELECT
     product_id,
     product_name,
     aisle_id,
@@ -158,82 +162,37 @@ flagged AS (SELECT
     product_name IS NOT NULL AND COUNT(*) OVER (PARTITION BY product_name) > 1 AS is_duplicate_name,
     product_name IS NOT NULL AND NOT product_name RLIKE '[A-Za-z]' AS is_gibberish_name
   FROM deduped)
-SELECT
-  product_id,
-  product_name,
+SELECT product_id, product_name,
   aisle_id,
   department_id,
-  CASE
-    WHEN product_name IS NULL  THEN 'missing_name'
-    WHEN is_gibberish_name     THEN 'gibberish_name'
-    WHEN is_conflicting_name   THEN 'conflicting_name'
-    WHEN is_duplicate_name     THEN 'duplicate_name'
-    WHEN aisle_id IS NULL      THEN 'missing_aisle'
-    WHEN department_id IS NULL THEN 'missing_department'
-    ELSE NULL
-  END AS product_quality_flag
+  FILTER(
+    ARRAY(
+      CASE WHEN product_name IS NULL  THEN 'missing_name' END,
+      CASE WHEN is_gibberish_name     THEN 'gibberish_name' END,
+      CASE WHEN is_conflicting_name   THEN 'conflicting_name' END,
+      CASE WHEN is_duplicate_name     THEN 'duplicate_name' END,
+      CASE WHEN aisle_id IS NULL      THEN 'missing_aisle' END,
+      CASE WHEN department_id IS NULL THEN 'missing_department' END
+    ),
+    x -> x IS NOT NULL
+  ) AS product_quality_flags
 FROM flagged;
+
 
 -- =====================================================================
 --   orders / order_products_prior / order_products_train
--- =====================================================================
--- Plain STREAMING TABLE per table -- same simple monitor-and-filter
--- pattern as the rest of the pipeline. No dedup mechanism built in
--- (no ROW_NUMBER/MATERIALIZED VIEW, no APPLY CHANGES INTO).
---
--- Why not dedup here: a duplicate (order_id, product_id) or duplicate
--- order_id across batches isn't a legitimate occurrence for this data --
--- unlike aisles.aisle_id getting a corrected name in a later batch, an
--- order_products row is an immutable historical fact. If the same key
--- shows up twice, it means a batch was built wrong (overlapping row
--- ranges, or the same file re-dropped), not that two different real
--- versions of the same row need reconciling. That's a process bug to
--- catch, not a data condition to silently resolve.
---
--- Detection, not resolution: duplicate keys are caught by the Bronze
--- audit log's null_key_rows/duplicate-count queries (02_bronze_audit_
--- processed_vs_new.sql), which runs as an automatic chained step after
--- every pipeline update -- not a manual check, just a different kind of
--- automation than a live streaming constraint. A per-row EXPECT can't do
--- this kind of check anyway: "is this key duplicated anywhere in the
--- table" needs an unbounded aggregation across the whole table, which
--- streaming constraints can't evaluate per-row regardless of mechanism.
--- If the audit log ever shows a nonzero duplicate count here, that's the
--- signal to go check how the batch was built -- not something the
--- pipeline should try to paper over on its own.
 -- =====================================================================
 
 
 -- =====================================================
 --               Orders
 -- =====================================================
--- order_id (PK): TRY_CAST + > 0 required, drop on failure -- same
--- identity-vs-descriptive framework as every other table. user_id/
--- order_number/order_dow/order_hour_of_day/days_since_prior_order are
--- descriptive: invalid -> nulled via CASE WHEN, not dropped, row stays.
---
--- eval_set = 'test' is filtered out entirely here -- a business-scope
--- exclusion (Kaggle competition holdout, no order_products data exists
--- for these orders by design), not a data-quality drop. Any eval_set
--- value that isn't 'prior'/'train' after that filter is flagged, not
--- expected to ever fire.
---
--- days_since_prior_order consistency checks: flagged (not dropped) if
--- non-null on a user's first order (order_number = 1) or null on a
--- repeat order (order_number != 1) -- both indicate something's off
--- without invalidating the row.
---
--- Quality signals collapse into one order_quality_flag via CASE WHEN,
--- same convention as aisles/departments/products -- only the first
--- matching issue is reported per row if several apply at once.
--- ---------------------------------------------------------------------
-
 CREATE OR REFRESH STREAMING TABLE week6.silver_test.orders_clean (
   CONSTRAINT order_id_valid EXPECT (
     order_id IS NOT NULL AND order_id > 0
   ) ON VIOLATION DROP ROW
 )
-COMMENT 'Cleaned orders: PK cast+validated (drop on failure), eval_set=test excluded, descriptive columns typed/nulled-on-invalid, single quality-flag column. Duplicate order_id across batches is not expected -- caught by the Bronze audit log, not resolved here.'
+COMMENT 'Cleaned orders: PK cast+validated (drop on failure), eval_set=test excluded, descriptive columns typed/nulled-on-invalid, quality-flags array. Duplicate order_id across batches is not expected -- caught by the Bronze audit log, not resolved here.'
 AS
 SELECT
   TRY_CAST(order_id AS BIGINT) AS order_id,
@@ -241,56 +200,47 @@ SELECT
        THEN TRY_CAST(user_id AS BIGINT) END          AS user_id,
   eval_set,
   CASE WHEN TRY_CAST(order_number AS INT) > 0
-       THEN TRY_CAST(order_number AS INT) END        AS order_number,
+       THEN TRY_CAST(order_number AS INT) END AS order_number,
   CASE WHEN TRY_CAST(order_dow AS INT) BETWEEN 0 AND 6
-       THEN TRY_CAST(order_dow AS INT) END           AS order_dow,
+       THEN TRY_CAST(order_dow AS INT) END AS order_dow,
   CASE WHEN TRY_CAST(order_hour_of_day AS INT) BETWEEN 0 AND 23
        THEN TRY_CAST(order_hour_of_day AS INT) END   AS order_hour_of_day,
   CASE WHEN TRY_CAST(days_since_prior_order AS DOUBLE) >= 0
        THEN TRY_CAST(days_since_prior_order AS DOUBLE) END AS days_since_prior_order,
-  CASE
-    WHEN TRY_CAST(user_id AS BIGINT) IS NULL OR TRY_CAST(user_id AS BIGINT) <= 0
-      THEN 'missing_user_id'
-    WHEN TRY_CAST(order_number AS INT) IS NULL OR TRY_CAST(order_number AS INT) <= 0
-      THEN 'missing_order_number'
-    WHEN TRY_CAST(order_dow AS INT) IS NULL OR TRY_CAST(order_dow AS INT) NOT BETWEEN 0 AND 6
-      THEN 'invalid_dow'
-    WHEN TRY_CAST(order_hour_of_day AS INT) IS NULL OR TRY_CAST(order_hour_of_day AS INT) NOT BETWEEN 0 AND 23
-      THEN 'invalid_hour'
-    WHEN TRY_CAST(order_number AS INT) = 1 AND TRY_CAST(days_since_prior_order AS DOUBLE) IS NOT NULL
-      THEN 'unexpected_days_prior_on_first_order'
-    WHEN TRY_CAST(order_number AS INT) <> 1 AND TRY_CAST(days_since_prior_order AS DOUBLE) IS NULL
-      THEN 'missing_days_prior_on_repeat_order'
-    WHEN eval_set NOT IN ('prior', 'train')
-      THEN 'unexpected_eval_set'
-    ELSE NULL
-  END AS order_quality_flag,
-  _ingested_at
+  FILTER(
+    ARRAY(
+      CASE WHEN TRY_CAST(user_id AS BIGINT) IS NULL OR TRY_CAST(user_id AS BIGINT) <= 0
+        THEN 'missing_user_id' END,
+      CASE WHEN TRY_CAST(order_number AS INT) IS NULL OR TRY_CAST(order_number AS INT) <= 0
+        THEN 'missing_order_number' END,
+      CASE WHEN TRY_CAST(order_dow AS INT) IS NULL OR TRY_CAST(order_dow AS INT) NOT BETWEEN 0 AND 6
+        THEN 'invalid_dow' END,
+      CASE WHEN TRY_CAST(order_hour_of_day AS INT) IS NULL OR TRY_CAST(order_hour_of_day AS INT) NOT BETWEEN 0 AND 23
+        THEN 'invalid_hour' END,
+      CASE WHEN TRY_CAST(order_number AS INT) = 1 AND TRY_CAST(days_since_prior_order AS DOUBLE) IS NOT NULL
+        THEN 'unexpected_days_prior_on_first_order' END,
+      CASE WHEN TRY_CAST(order_number AS INT) <> 1 AND TRY_CAST(days_since_prior_order AS DOUBLE) IS NULL
+        THEN 'missing_days_prior_on_repeat_order' END,
+      CASE WHEN eval_set NOT IN ('prior', 'train')
+        THEN 'unexpected_eval_set' END
+    ),
+    x -> x IS NOT NULL
+  ) AS order_quality_flags,
+  _ingested_at,
+  _source_file
 FROM STREAM(week6.bronze_test.orders)
 WHERE eval_set != 'test';
 
 -- =====================================================
 --               Order_Products_Prior
 -- =====================================================
--- order_id/product_id here are grain-defining, not descriptive -- unlike
--- products.aisle_id/department_id, a row with no valid order_id or
--- product_id has nothing salvageable (the whole row's reason to exist is
--- "this product was in this order"). So both a null/invalid key AND an
--- orphaned-but-syntactically-valid key (doesn't exist in orders_clean/
--- products_clean) get dropped here, via the CONSTRAINT plus the two
--- LEFT SEMI JOINs below -- different treatment from products' FK warn
--- rule, same reasoning we walked through for that distinction.
---
--- add_to_cart_order/reordered are descriptive: invalid -> nulled, not
--- dropped, same as every other non-identity column in this pipeline.
--- ---------------------------------------------------------------------
 CREATE OR REFRESH STREAMING TABLE week6.silver_test.order_products_prior_clean (
   CONSTRAINT keys_valid EXPECT (
     order_id IS NOT NULL AND order_id > 0
     AND product_id IS NOT NULL AND product_id > 0
   ) ON VIOLATION DROP ROW
 )
-COMMENT 'Cleaned order_products_prior: composite key cast+validated+orphan-checked (drop on failure), add_to_cart_order/reordered typed/nulled-on-invalid, single quality-flag column. Duplicate (order_id, product_id) across batches is not expected -- caught by the Bronze audit log, not resolved here.'
+COMMENT 'Cleaned order_products_prior: composite key cast+validated+orphan-checked (drop on failure), parent order confirmed eval_set=prior (not just any matching order_id), add_to_cart_order/reordered typed/nulled-on-invalid, quality-flags array. Duplicate (order_id, product_id) across batches is not expected -- caught by the Bronze audit log, not resolved here. Rows excluded here may include pending_order_reference cases, not only genuine rejects.'
 AS
 SELECT
   TRY_CAST(op.order_id AS BIGINT)   AS order_id,
@@ -299,17 +249,21 @@ SELECT
        THEN TRY_CAST(op.add_to_cart_order AS INT) END AS add_to_cart_order,
   CASE WHEN op.reordered IN ('0', '1')
        THEN TRY_CAST(op.reordered AS INT) END         AS reordered,
-  CASE
-    WHEN TRY_CAST(op.add_to_cart_order AS INT) IS NULL OR TRY_CAST(op.add_to_cart_order AS INT) <= 0
-      THEN 'invalid_cart_order'
-    WHEN op.reordered IS NOT NULL AND op.reordered NOT IN ('0', '1')
-      THEN 'invalid_reordered'
-    ELSE NULL
-  END AS line_item_quality_flag,
-  op._ingested_at
+  FILTER(
+    ARRAY(
+      CASE WHEN TRY_CAST(op.add_to_cart_order AS INT) IS NULL OR TRY_CAST(op.add_to_cart_order AS INT) <= 0
+        THEN 'invalid_cart_order' END,
+      CASE WHEN op.reordered IS NOT NULL AND op.reordered NOT IN ('0', '1')
+        THEN 'invalid_reordered' END
+    ),
+    x -> x IS NOT NULL
+  ) AS line_item_quality_flags,
+  op._ingested_at,
+  op._source_file
 FROM STREAM(week6.bronze_test.order_products_prior) op
 LEFT SEMI JOIN week6.silver_test.orders_clean o
   ON o.order_id = TRY_CAST(op.order_id AS BIGINT)
+  AND o.eval_set = 'prior'
 LEFT SEMI JOIN week6.silver_test.products_clean p
   ON p.product_id = TRY_CAST(op.product_id AS BIGINT);
 
@@ -323,7 +277,7 @@ CREATE OR REFRESH STREAMING TABLE week6.silver_test.order_products_train_clean (
     AND product_id IS NOT NULL AND product_id > 0
   ) ON VIOLATION DROP ROW
 )
-COMMENT 'Cleaned order_products_train: composite key cast+validated+orphan-checked (drop on failure), add_to_cart_order/reordered typed/nulled-on-invalid, single quality-flag column. Duplicate (order_id, product_id) across batches is not expected -- caught by the Bronze audit log, not resolved here.'
+COMMENT 'Cleaned order_products_train: composite key cast+validated+orphan-checked (drop on failure), parent order confirmed eval_set=train (not just any matching order_id), add_to_cart_order/reordered typed/nulled-on-invalid, quality-flags array. Duplicate (order_id, product_id) across batches is not expected -- caught by the Bronze audit log, not resolved here. Rows excluded here may include pending_order_reference cases, not only genuine rejects.'
 AS
 SELECT
   TRY_CAST(op.order_id AS BIGINT)   AS order_id,
@@ -332,16 +286,106 @@ SELECT
        THEN TRY_CAST(op.add_to_cart_order AS INT) END AS add_to_cart_order,
   CASE WHEN op.reordered IN ('0', '1')
        THEN TRY_CAST(op.reordered AS INT) END         AS reordered,
-  CASE
-    WHEN TRY_CAST(op.add_to_cart_order AS INT) IS NULL OR TRY_CAST(op.add_to_cart_order AS INT) <= 0
-      THEN 'invalid_cart_order'
-    WHEN op.reordered IS NOT NULL AND op.reordered NOT IN ('0', '1')
-      THEN 'invalid_reordered'
-    ELSE NULL
-  END AS line_item_quality_flag,
-  op._ingested_at
+  FILTER(
+    ARRAY(
+      CASE WHEN TRY_CAST(op.add_to_cart_order AS INT) IS NULL OR TRY_CAST(op.add_to_cart_order AS INT) <= 0
+        THEN 'invalid_cart_order' END,
+      CASE WHEN op.reordered IS NOT NULL AND op.reordered NOT IN ('0', '1')
+        THEN 'invalid_reordered' END
+    ),
+    x -> x IS NOT NULL
+  ) AS line_item_quality_flags,
+  op._ingested_at,
+  op._source_file
 FROM STREAM(week6.bronze_test.order_products_train) op
 LEFT SEMI JOIN week6.silver_test.orders_clean o
   ON o.order_id = TRY_CAST(op.order_id AS BIGINT)
+  AND o.eval_set = 'train'
 LEFT SEMI JOIN week6.silver_test.products_clean p
   ON p.product_id = TRY_CAST(op.product_id AS BIGINT);
+
+-- =============================================================================
+-- SILVER LAYER — WARN-FLAG SUMMARY (rows kept, but with an issue flagged)
+-- =============================================================================
+
+CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.dq_warnings_summary AS
+SELECT 'aisles' AS table_name, flag, COUNT(*) AS flagged_row_count
+FROM week6.silver_test.aisles_clean LATERAL VIEW EXPLODE(aisle_quality_flags) t AS flag
+GROUP BY flag
+UNION ALL
+SELECT 'departments', flag, COUNT(*)
+FROM week6.silver_test.departments_clean LATERAL VIEW EXPLODE(department_quality_flags) t AS flag
+GROUP BY flag
+UNION ALL
+SELECT 'products', flag, COUNT(*)
+FROM week6.silver_test.products_clean LATERAL VIEW EXPLODE(product_quality_flags) t AS flag
+GROUP BY flag
+UNION ALL
+SELECT 'orders', flag, COUNT(*)
+FROM week6.silver_test.orders_clean LATERAL VIEW EXPLODE(order_quality_flags) t AS flag
+GROUP BY flag
+UNION ALL
+SELECT 'order_products_prior', flag, COUNT(*)
+FROM week6.silver_test.order_products_prior_clean LATERAL VIEW EXPLODE(line_item_quality_flags) t AS flag
+GROUP BY flag
+UNION ALL
+SELECT 'order_products_train', flag, COUNT(*)
+FROM week6.silver_test.order_products_train_clean LATERAL VIEW EXPLODE(line_item_quality_flags) t AS flag
+GROUP BY flag
+ORDER BY table_name, flagged_row_count DESC;
+ 
+ 
+-- =============================================================================
+-- SUPPLEMENT — total rows and % with at least one flag, per table
+-- =============================================================================
+-- dq_warnings_summary above answers "how many rows have flag X" (multi-count
+-- per row). This answers the coarser "how much of this table has ANY issue
+-- at all" -- one row counted once regardless of how many flags it carries.
+-- Useful as a single top-line data-quality number per table alongside the
+-- drop-rate gates' percentages.
+-- =============================================================================
+CREATE OR REFRESH MATERIALIZED VIEW week6.silver_test.dq_warnings_coverage AS
+SELECT
+  'aisles' AS table_name,
+  COUNT(*)                                   AS total_rows,
+  COUNT_IF(SIZE(aisle_quality_flags) > 0)    AS rows_with_any_flag,
+  ROUND(100.0 * COUNT_IF(SIZE(aisle_quality_flags) > 0) / COUNT(*), 2) AS pct_rows_flagged
+FROM week6.silver_test.aisles_clean
+UNION ALL
+SELECT
+  'departments',
+  COUNT(*),
+  COUNT_IF(SIZE(department_quality_flags) > 0),
+  ROUND(100.0 * COUNT_IF(SIZE(department_quality_flags) > 0) / COUNT(*), 2)
+FROM week6.silver_test.departments_clean
+UNION ALL
+SELECT
+  'products',
+  COUNT(*),
+  COUNT_IF(SIZE(product_quality_flags) > 0),
+  ROUND(100.0 * COUNT_IF(SIZE(product_quality_flags) > 0) / COUNT(*), 2)
+FROM week6.silver_test.products_clean
+UNION ALL
+SELECT
+  'orders',
+  COUNT(*),
+  COUNT_IF(SIZE(order_quality_flags) > 0),
+  ROUND(100.0 * COUNT_IF(SIZE(order_quality_flags) > 0) / COUNT(*), 2)
+FROM week6.silver_test.orders_clean
+ 
+UNION ALL
+SELECT
+  'order_products_prior',
+  COUNT(*),
+  COUNT_IF(SIZE(line_item_quality_flags) > 0),
+  ROUND(100.0 * COUNT_IF(SIZE(line_item_quality_flags) > 0) / COUNT(*), 2)
+FROM week6.silver_test.order_products_prior_clean
+UNION ALL
+SELECT
+  'order_products_train',
+  COUNT(*),
+  COUNT_IF(SIZE(line_item_quality_flags) > 0),
+  ROUND(100.0 * COUNT_IF(SIZE(line_item_quality_flags) > 0) / COUNT(*), 2)
+FROM week6.silver_test.order_products_train_clean
+ 
+ORDER BY table_name;
