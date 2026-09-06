@@ -6,12 +6,13 @@
 
 Build an end-to-end pipeline for the Instacart Market Basket Analysis dataset using the Bronze–Silver–Gold medallion architecture in Databricks.
 
+All available source files were ingested in a single initial load after completing several test runs. Streaming tables were used so the same pipeline can be reused to process future batches incrementally without reloading previously processed files.
 The solution uses Lakeflow Spark Declarative Pipelines to:
 
-* Ingest new CSV files incrementally
+* Ingest the initial dataset and any future CSV batches
 * Preserve raw source data
 * Apply row-level and batch-level data-quality checks
-* Separate rejected rows from warning-level issues
+* Separate rejected rows from clean rows or rows with warning-level issues
 * Transform the data into a star schema
 * Produce dashboard-ready business views
 
@@ -80,12 +81,12 @@ Incremental CSV batches
 | ------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
 | `week6.raw`         | One-time schema discovery using the complete source files         | 6 tables                                             |
 | `week6.bronze_test` | Lossless and incremental ingestion through Auto Loader            | 6 streaming tables                                   |
-| `week6.silver_test` | Type conversion, rejection rules, warning flags, and DQ summaries | 6 clean tables plus reject, warning, and gate tables |
+| `week6.silver_test` | Type conversion, rejection rules, warning flags, and DQ summaries | 3 clean streaming tables, 3 clean materialized views, plus reject, warning, and gate tables |
 | `week6.gold_test`   | Dimensional model and business-ready aggregations                 | 2 dimensions, 1 fact table, and business views       |
 
-The large event tables—`orders`, `order_products_prior`, and `order_products_train`—are processed incrementally as streaming tables.
+The large event tables (`orders`, `order_products_prior`, and `order_products_train`) are streaming tables by design (built to absorb future batches incrementally), even though this project's actual data arrived as a single load.
 
-The smaller reference datasets—`aisles`, `departments`, and `products`—use materialized views in Silver because their transformations require grouping and ranking logic. Their sizes are small enough that either incremental maintenance or full recomputation is acceptable.
+The smaller reference datasets (`aisles`, `departments`, and `products`) use materialized views in Silver because their transformations require grouping and ranking logic. Their sizes are small enough that either incremental maintenance or full recomputation is acceptable.
 
 <!-- ─────────── New %md cell ─────────── -->
 
