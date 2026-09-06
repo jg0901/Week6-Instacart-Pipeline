@@ -56,17 +56,17 @@ Incremental CSV batches
         ▼
 ┌────────────────────┐
 │ week6.bronze_test  │  Auto Loader streaming ingestion
-│                    │  No rows dropped
+│ week6.bronze       │  No rows dropped
 └─────────┬──────────┘
           ▼
 ┌────────────────────┐
 │ week6.silver_test  │  Type conversion, validation,
-│                    │  rejection, and warning flags
+│ week6.silver       │  rejection, and warning flags
 └─────────┬──────────┘
           ▼
 ┌────────────────────┐
 │ week6.gold_test    │  Star schema
-│                    │  Two dimensions and one fact
+│ week6.gold         │  Two dimensions and one fact
 └─────────┬──────────┘
           ▼
    Business views
@@ -80,9 +80,9 @@ Incremental CSV batches
 | Layer               | Purpose                                                           | Main objects                                         |
 | ------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
 | `week6.raw`         | One-time schema discovery using the complete source files         | 6 tables                                             |
-| `week6.bronze_test` | Lossless and incremental ingestion through Auto Loader            | 6 streaming tables                                   |
-| `week6.silver_test` | Type conversion, rejection rules, warning flags, and DQ summaries | 3 clean streaming tables, 3 clean materialized views, plus reject, warning, and gate tables |
-| `week6.gold_test`   | Dimensional model and business-ready aggregations                 | 2 dimensions, 1 fact table, and business views       |
+| `week6.bronze` | Lossless and incremental ingestion through Auto Loader            | 6 streaming tables                                   |
+| `week6.silver` | Type conversion, rejection rules, warning flags, and DQ summaries | 3 clean streaming tables, 3 clean materialized views, plus reject, warning, and gate tables |
+| `week6.gold`   | Dimensional model and business-ready aggregations                 | 2 dimensions, 1 fact table, and business views       |
 
 The large event tables (`orders`, `order_products_prior`, and `order_products_train`) are streaming tables by design (built to absorb future batches incrementally), even though this project's actual data arrived as a single load.
 
@@ -377,12 +377,102 @@ The gate definitions are implemented in:
 04_silver_dq_gate.sql
 04b_silver_batch_dq_gate.sql
 ```
+<!-- ─────────── New %md cell ─────────── -->
+## 5. Test runs
+
+### Test-batch preparation
+
+Before loading the full dataset, controlled test batches were created from the original Instacart CSV files. These batches were used to confirm that the pipeline could process newly arriving files incrementally across multiple runs.
+
+The `orders` dataset was divided into three sequential subsets:
+
+* **Batch 1:** the first 100,000 orders
+* **Batch 2:** the next 5,000 orders
+* **Batch 3:** another 5,000 orders
+
+For each batch, the corresponding `order_products_prior` rows were selected by matching their `order_id` values to the orders included in that batch. This preserved referential integrity between the two datasets during testing.
+
+The smaller reference datasets—`products`, `aisles`, and `departments`—were initially loaded in full. The complete `order_products_train` dataset was also loaded. Because the test environment contained only a subset of `orders`, however, some train line items did not yet have a matching parent order. These unmatched references were treated as a known limitation of the test setup rather than confirmed data-quality defects. See the referential-integrity caveat under `order_products_prior_clean` and `order_products_train_clean`.
+
+Each test batch was saved as a separate CSV file and added to the Auto Loader source directory one run at a time. This simulated the arrival of new source files and allowed the pipeline’s incremental processing, validation, audit logging, duplicate detection, and no-new-data behavior to be tested before the final load.
+
+### Test Run 1 — Pipeline sanity check
+
+The first run loaded Batch 1:
+
+* 100,000 `orders` rows
+* Approximately 1 million matching `order_products_prior` rows
+
+No test defects were introduced during this run, and the other source files were left unchanged.
+
+The purpose was to confirm that the pipeline could complete successfully from Bronze through Gold before testing specific data-quality scenarios.
+
+### Test Run 2 — Data-quality logging check
+
+The second run loaded Batch 2, consisting of the next 5,000 orders and their corresponding `order_products_prior` rows.
+
+Deliberately malformed records were also added to `aisles`, `departments`, and `orders`. The purpose was to confirm that invalid values were captured by the appropriate Bronze expectations, Silver reject tables, warning flags, and audit summaries instead of passing through or disappearing without explanation.
+
+The following test records were introduced:
+
+* **`aisles`**
+
+  * Non-numeric `aisle_id` values: `a130` and `abc131`
+  * Negative `aisle_id`: `-132`
+  * Blank `aisle` name for ID `138`
+  * Suspicious but syntactically valid names: ID `139` with `test2c` and ID `140` with `test2d`
+
+* **`departments`**
+
+  * Non-numeric `department_id`: `a18`
+  * Negative `department_id`: `-19`
+  * Blank `department` name for ID `24`
+
+* **`orders`**
+
+  * Non-numeric `order_id`: `a11734`
+  * Non-numeric `user_id`: `abc108586`
+  * Negative `order_id` values: `-12` and `-17`
+  * Blank `order_dow` and `order_hour_of_day` values
+
+The names `test2c` and `test2d` are structurally valid strings, so the current automated rules do not necessarily classify them as invalid. They were included to demonstrate the limitation of rule-based validation: a value may be syntactically valid while still being suspicious from a business perspective.
+
+### Test Run 3 — File identity and cross-batch duplicates
+
+Test Run 3 contained two separate duplicate scenarios.
+
+#### Test Run 3a — Same content under a different filename
+
+The Batch 1 files were copied and renamed:
+
+* `orders_test1` became `orders_test3a`
+* `order_products_prior_test1` became `order_products_prior_test_3a`
+
+The renamed files were then added to the Auto Loader source directory.
+
+Although their contents were identical to previously processed files, Auto Loader treated them as new inputs because they arrived under different file paths. The records were therefore ingested again. This demonstrated the distinction between file-level tracking and row-level duplicate detection: recognizing a file as new does not prove that its records are new.
+
+See **“Auto Loader’s Duplicate Blind Spot”** in the presentation deck for further discussion.
+
+#### Test Run 3b — Selected duplicates across batches
+
+Batch 3 contained the next 5,000 orders and their corresponding `order_products_prior` rows. It also deliberately reintroduced records that had already been loaded in Batch 1:
+
+* 30 duplicate `orders` rows
+* 1,000 duplicate `order_products_prior` rows
+
+This test confirmed that the `duplicate_key_rows` audit metric could identify cross-batch duplicates and trace them to their source files.
+
+The active pipeline detects and reports these duplicates but does not yet remove them automatically. The same design limitation applies to `orders`, `order_products_prior`, and `order_products_train`: duplicate immutable business events are treated as ingestion defects, not legitimate updates to be resolved using Auto CDC.
+
+See **“Duplicates Across Batches”** and **“Limitations and Open Items”** for the proposed treatment.
+
 
 <!-- ─────────── New %md cell ─────────── -->
 
-## 5. Challenges and lessons learned
+## 6. Challenges and lessons learned
 
-### 5.1 Initial stream-static join returned no rows
+### 6.1 Initial stream-static join returned no rows
 
 #### Observation
 
@@ -427,7 +517,7 @@ Before rewriting the transformation:
 4. Run the equivalent join independently.
 5. Review pipeline state and update history.
 
-### 5.2 Missing internal staging table
+### 6.2 Missing internal staging table
 
 #### Observation
 
@@ -458,7 +548,7 @@ When an error references an internal UUID:
 
 Large datasets may increase run time and therefore increase the opportunity for overlapping runs, but data volume alone does not prove that it caused the failure.
 
-### 5.3 Auto Loader does not detect duplicate content
+### 6.3 Auto Loader does not detect duplicate content
 
 #### Observation
 
@@ -513,7 +603,7 @@ Solving one does not automatically solve the others.
 
 <!-- ─────────── New %md cell ─────────── -->
 
-## 6. Validation coverage
+## 7. Validation coverage
 
 | Validation                         | Layer             | What it demonstrates                                                               |
 | ---------------------------------- | ----------------- | ---------------------------------------------------------------------------------- |
@@ -575,3 +665,23 @@ Both rows would pass ordinary row-level constraints.
 Duplicate detection therefore requires a grouped comparison across records, which is why `duplicate_key_rows` is calculated separately in the ingestion audit.
 
 The active pipeline currently detects and reports duplicate keys but does not resolve them automatically. Until an automated pre-ingestion or canonical-deduplication process is implemented, any detected duplicate must block Gold publication or be resolved before analytical outputs are considered valid.
+
+<!-- ─────────── New %md cell ─────────── -->
+## 8. Limitations and Open Items
+
+
+* **No active deduplication for `orders`, `order_products_prior`, or `order_products_train`.** Duplicate business keys are detected through `duplicate_key_rows` in the ingestion audit log but are not removed automatically. Test Run 3b directly verified this detection for `orders` and `order_products_prior`; the same audit logic also applies to `order_products_train`. Two possible solutions have been designed but are not connected to the active Job: `future_silver_canonical_dedup.sql` for cross-batch deduplication and `future_silver_batch_dedup.sql` for duplicates within the current batch only. See **“Duplicates Across Batches.”**
+
+* **Rejected orphan rows are not reconsidered when their parent order arrives later.** The `order_products_prior_clean` and `order_products_train_clean` objects are streaming tables, so a line item is evaluated against the available parent records only when that line item is processed. If its parent order arrives in a later batch, the previously excluded line item is not evaluated again automatically. Consequently, an orphan count recorded while using a partial `orders` dataset may include pending references rather than genuine data defects. See the referential-integrity caveat under `order_products_prior_clean` and `order_products_train_clean`.
+
+* **The reference-table deduplication logic has two known edge cases.** First, missing and uncastable keys become `NULL` after `TRY_CAST`. Because the ranking logic partitions by the converted key, all such rows are placed in the same `NULL` partition. Only one may reach the downstream reject expectation, causing multiple unrelated bad-key rows to be undercounted. Second, conflicting rows from the same source file can have identical `_source_file_modified_at`, `_ingested_at`, and `_source_file` values. Without an additional row-level tie-breaker, the selected winner is not guaranteed to be deterministic. These limitations apply to the deduplication logic in `aisles_clean`, `departments_clean`, and `products_clean`.
+
+* **Audit-log writes are not fully retry-safe.** If `02_ingestion_audit_log.sql` fails after writing some results and the Job retries the task, the same logical batch may be recorded more than once. The duplicate audit entry may contain a misleadingly small or zero row-count change, which can affect the next comparison performed by `04b_silver_batch_dq_gate.sql`. The current mitigation is to set the audit task’s retry count to `0`; idempotency is not enforced by the SQL itself. 
+
+* **Cold-start protection applies only when the pipeline is triggered through the Job.** The `00a_ensure_audit_tables.sql` task creates the required audit tables before the pipeline runs. Starting the Lakeflow pipeline directly from its own interface bypasses this task and may cause the batch-level quality gate to fail when running against a completely empty schema. The Job execution order is therefore an operational requirement rather than a dependency enforced within the pipeline.
+
+* **The mapping of `order_dow = 0` to Sunday is an analytical assumption.** The dataset represents the day of the week using values from `0` to `6` but does not confirm the corresponding day names. This assumption affects only the labels shown in Gold and the dashboard. Comparisons among the numbered days remain valid even if the assigned names are incorrect. 
+
+* **The reusable streaming design has not been tested under continuous production conditions.** The `orders`, `order_products_prior`, and `order_products_train` tables use streaming ingestion so future files can be processed incrementally. This behavior was verified using manually staged test batches, but the final dataset was loaded in a single run rather than through a genuine multi-day production feed. Auto Loader’s incremental file-discovery mechanism is real; what remains untested is its behavior under sustained production volume, operational retries, and continuously arriving data.
+
+
