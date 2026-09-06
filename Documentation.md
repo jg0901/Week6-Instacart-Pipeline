@@ -6,7 +6,7 @@
 
 Build an end-to-end pipeline for the Instacart Market Basket Analysis dataset using the Bronze–Silver–Gold medallion architecture in Databricks.
 
-The solution uses Lakeflow Spark Declarative Pipelines, formerly Delta Live Tables (DLT), to:
+The solution uses Lakeflow Spark Declarative Pipelines to:
 
 * Ingest new CSV files incrementally
 * Preserve raw source data
