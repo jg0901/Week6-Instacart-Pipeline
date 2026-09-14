@@ -38,10 +38,10 @@ This approach allowed the team to validate the data quality logic on controlled 
 Complete original CSV files
         │
         ▼
-┌────────────────────┐
-│ week6.raw          │  One-time full load
-│                    │  Explicit schema and complete source data
-└─────────┬──────────┘
+┌────────────────────────────────┐
+│ /Volumes/week6/bronze/raw_files|     One-time full load
+│                                │  Explicit schema and complete source data
+└─────────┬──────────────────────┘
           ▼
 ┌───────────────────────────────┐
 │ Schema-discovery checks       │
@@ -86,7 +86,7 @@ Incremental CSV batches
 
 | Layer               | Purpose                                                           | Main objects                                         |
 | ------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
-| `week6.raw`         | One-time schema discovery using the complete source files         | 6 tables                                             |
+| `/Volumes/week6/bronze/raw_files`         | One-time schema discovery using the complete source files         | 6 tables                                             |
 | `week6.bronze` | Lossless and incremental ingestion through Auto Loader            | 6 streaming tables                                   |
 | `week6.silver` | Type conversion, rejection rules, warning flags, and DQ summaries | 3 clean streaming tables, 3 clean materialized views, plus reject, warning, and gate tables |
 | `week6.gold`   | Dimensional model and business-ready aggregations                 | 2 dimensions, 1 fact table, and business views       |
