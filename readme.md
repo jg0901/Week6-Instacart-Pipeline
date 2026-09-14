@@ -392,7 +392,7 @@ The `orders` dataset was divided into three sequential subsets:
 
 For each batch, the corresponding `order_products_prior` rows were selected by matching their `order_id` values to the orders included in that batch. This preserved referential integrity between the two datasets during testing.
 
-The smaller reference datasets—`products`, `aisles`, and `departments`—were initially loaded in full. The complete `order_products_train` dataset was also loaded. Because the test environment contained only a subset of `orders`, however, some train line items did not yet have a matching parent order. These unmatched references were treated as a known limitation of the test setup rather than confirmed data-quality defects. See the referential-integrity caveat under `order_products_prior_clean` and `order_products_train_clean`.
+The smaller reference datasets—`products`, `aisles`, and `departments`—were initially loaded in full. The complete `order_products_train` dataset was also loaded. Because the test environment contained only a subset of `orders`, however, some train line items did not yet have a matching parent order. These unmatched references were treated as a known limitation of the test setup rather than confirmed data-quality defects.  the referential-integrity caveat under `order_products_prior_clean` and `order_products_train_clean`.
 
 Each test batch was saved as a separate CSV file and added to the Auto Loader source directory one run at a time. This simulated the arrival of new source files and allowed the pipeline’s incremental processing, validation, audit logging, duplicate detection, and no-new-data behavior to be tested before the final load.
 
@@ -451,8 +451,6 @@ The Batch 1 files were copied and renamed:
 The renamed files were then added to the Auto Loader source directory.
 
 Although their contents were identical to previously processed files, Auto Loader treated them as new inputs because they arrived under different file paths. The records were therefore ingested again. This demonstrated the distinction between file-level tracking and row-level duplicate detection: recognizing a file as new does not prove that its records are new.
-
-See **“Auto Loader’s Duplicate Blind Spot”** in the presentation deck for further discussion.
 
 #### Test Run 3b — Selected duplicates across batches
 
