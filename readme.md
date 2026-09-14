@@ -20,12 +20,19 @@ The solution uses Lakeflow Spark Declarative Pipelines to:
 
 ## 1. Data flow
 
-The project has two related but separate paths:
+The project followed two main stages: **data profiling and test validation**, followed by **full-dataset pipeline execution**.
 
-1. A one-time schema-discovery process using the complete original dataset
-2. The main incremental pipeline using test batches and Auto Loader
+1. **Data profiling using the original dataset**
+   Each team member was assigned specific source tables to profile and identify potential data quality issues. The complete original dataset was used during this stage so that quality checks could be designed based on the actual characteristics of the data. For larger datasets, **PySpark** was used for exploratory data analysis and profiling.
 
-The discovery tables do not directly feed the production pipeline. Instead, profiling results from the complete files are used to define the appropriate schemas, constraints, and relationships for the incremental pipeline.
+2. **Quality-check validation through test runs**
+   Before processing the complete dataset through the pipeline, three test runs were performed using prepared test data. These runs were used to verify that the implemented data quality checks could correctly detect and trace different types of issues, such as invalid values, referential integrity problems, and duplicate records.
+
+3. **Full-dataset pipeline execution**
+   After the quality checks were validated through the three test runs, the complete original dataset was processed using the finalized pipeline. The same overall pipeline structure was retained, while the test schemas were replaced with the final schemas—for example, `bronze_test` was changed to `bronze`, with corresponding changes for the succeeding layers.
+
+This approach allowed the team to validate the data quality logic on controlled test cases before applying it to the complete dataset.
+
 
 ```text
 Complete original CSV files
