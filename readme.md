@@ -413,6 +413,13 @@ The first run loaded Batch 1:
 No test defects were introduced during this run, and the other source files were left unchanged.
 
 The purpose was to confirm that the pipeline could complete successfully from Bronze through Gold before testing specific data-quality scenarios.
+![testrun1_bronze](test_run1_bronze.png)
+
+In this test run, the pipeline failed due to dropped of orphan rows. 100,000 orders were all prior orders, so whole `order_products_train` dataset got dropped. Since it reached the 10% dropped threshold, pipeline failed.
+
+![testrun1_results](test_run1_dq_gate_table.png)
+
+![testrun1_results2](test_run1_job_overview.png)
 
 ### Test Run 2 — Data-quality logging check
 
