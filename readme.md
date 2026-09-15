@@ -458,7 +458,8 @@ The names `test2c` and `test2d` are structurally valid strings, so the current a
 ![testrun2_results3](instacart%20test%20runs%20results/test_run2_bronze_orders.png)
 
 ![testrun2_results4](instacart%20test%20runs%20results/test_run2_silver_aisle%20reject.png)
-![testrun2_results5](instacart%20test%20runs%20results/est_run2_silver_departments_rejects.png)
+
+![testrun2_results5](instacart%20test%20runs%20results/test_run2_silver_departments_rejects.png)
 
 ### Test Run 3 — File identity and cross-batch duplicates
 
