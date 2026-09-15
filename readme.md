@@ -121,7 +121,7 @@ The following are required:
 
 The recurring pipeline should be triggered through the Databricks Job rather than directly from the pipeline interface. The Job ensures that the required audit tables exist before the pipeline evaluates its drop-rate gates.
 
-[instacart_job](Week6%20-%20Instacart/Instacart_job.png)
+![instacart_job](Instacart_job.png)
 
 ### Incremental execution
 
