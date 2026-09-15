@@ -86,7 +86,7 @@ Incremental CSV batches
 
 | Layer               | Purpose                                                           | Main objects                                         |
 | ------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
-| `/Volumes/week6/bronze/raw_files`         | One-time schema discovery using the complete source files         | 6 tables                                             |
+
 | `week6.bronze` | Lossless and incremental ingestion through Auto Loader            | 6 streaming tables                                   |
 | `week6.silver` | Type conversion, rejection rules, warning flags, and DQ summaries | 3 clean streaming tables, 3 clean materialized views, plus reject, warning, and gate tables |
 | `week6.gold`   | Dimensional model and business-ready aggregations                 | 2 dimensions, 1 fact table, and business views       |
@@ -114,12 +114,11 @@ The following are required:
 
 | Step | Task                          | Output                                                             | Dependency         |
 | ---- | ----------------------------- | ------------------------------------------------------------------ | ------------------ |
-| 0    | `01_raw_ingestion.sql`        | Creates the six `week6.raw` discovery tables                       | Original CSV files |
-| 1    | `00a_ensure_audit_tables.sql` | Creates the two audit tables if they do not already exist          | None               |
+| 0    | `Bronze Validations and Pre-cleaning Analysis.sql` | Profiling for DQ and Identifying the needed transformations for silver layer          | 6 CSV original tables              |
+| 1    | `0a_Audit_Tables.sql` | Creates the two audit tables if they do not already exist          | None               |
 | 2    | Lakeflow pipeline             | Builds Bronze, Silver, Gold, DQ support tables, and business views | Step 1             |
-| 3    | `02_ingestion_audit_log.sql`  | Appends ingestion metrics and runs duplicate-key checks            | Step 2             |
+| 3    | `0b_Audit_Log.sql`  | Appends ingestion metrics and runs duplicate-key checks            | Step 2             |
 
-Step 0 is a one-time discovery process and is not part of the recurring Job.
 
 The recurring pipeline should be triggered through the Databricks Job rather than directly from the pipeline interface. The Job ensures that the required audit tables exist before the pipeline evaluates its drop-rate gates.
 
@@ -348,8 +347,8 @@ Two types of supporting outputs make the decisions observable:
 The Silver DQ implementation is contained in:
 
 ```text
-03c_silver_dq_rejects.sql
-03d_silver_dq_warnings_summary.sql
+silver.sql
+dq_gate.sql
 ```
 
 ### Drop-rate gates
@@ -381,8 +380,7 @@ If these reference datasets later become incremental, their rejection rates shou
 The gate definitions are implemented in:
 
 ```text
-04_silver_dq_gate.sql
-04b_silver_batch_dq_gate.sql
+dq_gate.sql
 ```
 <!-- ─────────── New %md cell ─────────── -->
 ## 5. Test runs
@@ -598,7 +596,7 @@ are treated as two input files even when their contents are byte-identical.
 Duplicate business keys are detected through:
 
 ```text
-ingestion_audit_log.duplicate_key_rows
+Audit log.duplicate_key_rows
 ```
 
 The following proposed designs also exist but are not yet connected to the active pipeline:
@@ -702,7 +700,7 @@ The active pipeline currently detects and reports duplicate keys but does not re
 
 * **The reference-table deduplication logic has two known edge cases.** First, missing and uncastable keys become `NULL` after `TRY_CAST`. Because the ranking logic partitions by the converted key, all such rows are placed in the same `NULL` partition. Only one may reach the downstream reject expectation, causing multiple unrelated bad-key rows to be undercounted. Second, conflicting rows from the same source file can have identical `_source_file_modified_at`, `_ingested_at`, and `_source_file` values. Without an additional row-level tie-breaker, the selected winner is not guaranteed to be deterministic. These limitations apply to the deduplication logic in `aisles_clean`, `departments_clean`, and `products_clean`.
 
-* **Audit-log writes are not fully retry-safe.** If `02_ingestion_audit_log.sql` fails after writing some results and the Job retries the task, the same logical batch may be recorded more than once. The duplicate audit entry may contain a misleadingly small or zero row-count change, which can affect the next comparison performed by `04b_silver_batch_dq_gate.sql`. The current mitigation is to set the audit task’s retry count to `0`; idempotency is not enforced by the SQL itself. 
+* **Audit-log writes are not fully retry-safe.** If `Ob Audit Log.sql` fails after writing some results and the Job retries the task, the same logical batch may be recorded more than once. The duplicate audit entry may contain a misleadingly small or zero row-count change, which can affect the next comparison performed by `dq_gate.sql`. The current mitigation is to set the audit task’s retry count to `0`; idempotency is not enforced by the SQL itself. 
 
 * **Cold-start protection applies only when the pipeline is triggered through the Job.** The `00a_ensure_audit_tables.sql` task creates the required audit tables before the pipeline runs. Starting the Lakeflow pipeline directly from its own interface bypasses this task and may cause the batch-level quality gate to fail when running against a completely empty schema. The Job execution order is therefore an operational requirement rather than a dependency enforced within the pipeline.
 
