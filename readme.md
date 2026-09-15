@@ -86,10 +86,10 @@ Incremental CSV batches
 
 | Layer               | Purpose                                                           | Main objects                                         |
 | ------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
-
 | `week6.bronze` | Lossless and incremental ingestion through Auto Loader            | 6 streaming tables                                   |
 | `week6.silver` | Type conversion, rejection rules, warning flags, and DQ summaries | 3 clean streaming tables, 3 clean materialized views, plus reject, warning, and gate tables |
 | `week6.gold`   | Dimensional model and business-ready aggregations                 | 2 dimensions, 1 fact table, and business views       |
+
 
 The large event tables (`orders`, `order_products_prior`, and `order_products_train`) are streaming tables by design (built to absorb future batches incrementally), even though this project's actual data arrived as a single load.
 
@@ -119,8 +119,9 @@ The following are required:
 | 2    | Lakeflow pipeline             | Builds Bronze, Silver, Gold, DQ support tables, and business views | Step 1             |
 | 3    | `0b_Audit_Log.sql`  | Appends ingestion metrics and runs duplicate-key checks            | Step 2             |
 
-
 The recurring pipeline should be triggered through the Databricks Job rather than directly from the pipeline interface. The Job ensures that the required audit tables exist before the pipeline evaluates its drop-rate gates.
+
+[instacart_job](Week6%20-%20Instacart/Instacart_job.png)
 
 ### Incremental execution
 
