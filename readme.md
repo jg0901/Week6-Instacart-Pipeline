@@ -413,13 +413,13 @@ The first run loaded Batch 1:
 No test defects were introduced during this run, and the other source files were left unchanged.
 
 The purpose was to confirm that the pipeline could complete successfully from Bronze through Gold before testing specific data-quality scenarios.
-![testrun1_bronze](test_run1_bronze.png)
+![testrun1_bronze](instacart%20test%20runs%20results/test_run1_bronze.png)
 
 In this test run, the pipeline failed due to dropped of orphan rows. 100,000 orders were all prior orders, so whole `order_products_train` dataset got dropped. Since it reached the 10% dropped threshold, pipeline failed.
 
-![testrun1_results](test_run1_dq_gate_table.png)
+![testrun1_results](instacart%20test%20runs%20results/test_run1_batch_dq_gate.png)
 
-![testrun1_results2](test_run1_job_overview.png)
+![testrun1_results2](instacart%20test%20runs%20results/test_run1_job_overview.png)
 
 ### Test Run 2 — Data-quality logging check
 
@@ -451,6 +451,15 @@ The following test records were introduced:
 
 The names `test2c` and `test2d` are structurally valid strings, so the current automated rules do not necessarily classify them as invalid. They were included to demonstrate the limitation of rule-based validation: a value may be syntactically valid while still being suspicious from a business perspective.
 
+![testrun2_results1](instacart%20test%20runs%20results/test_run2_bronze_aisle.png)
+
+![testrun2_results2](instacart%20test%20runs%20results/test_run2_bronze_departments.png)
+
+![testrun2_results3](instacart%20test%20runs%20results/test_run2_bronze_orders.png)
+
+![testrun2_results4](instacart%20test%20runs%20results/test_run2_silver_aisle%20reject.png)
+![testrun2_results5](instacart%20test%20runs%20results/est_run2_silver_departments_rejects.png)
+
 ### Test Run 3 — File identity and cross-batch duplicates
 
 Test Run 3 contained two separate duplicate scenarios.
@@ -465,6 +474,10 @@ The Batch 1 files were copied and renamed:
 The renamed files were then added to the Auto Loader source directory.
 
 Although their contents were identical to previously processed files, Auto Loader treated them as new inputs because they arrived under different file paths. The records were therefore ingested again. This demonstrated the distinction between file-level tracking and row-level duplicate detection: recognizing a file as new does not prove that its records are new.
+
+
+![testrun3_results1](instacart%20test%20runs%20results/test_run3a.ordersduplicates.png)
+![testrun3_results1](instacart%20test%20runs%20results/test_run3a.rows_total.png)
 
 #### Test Run 3b — Selected duplicates across batches
 
